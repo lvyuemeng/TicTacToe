@@ -1,10 +1,11 @@
-import { Effect as E, Option as O } from 'effect';
+import { Console, Effect as E, Option as O } from 'effect';
 import { Match as M } from "effect";
+import type { Effect } from 'effect/Effect';
 import { never } from 'effect/Fiber';
 import { some } from 'effect/Predicate';
 
-export type { GameState, GameStatus }
-export { TicTacToe }
+export type { GameState, GameStatus, Pos }
+export { TicTacToe, Player }
 
 type GameSlot = 'X' | 'O' | ' ';
 type Board = GameSlot[][]
@@ -40,13 +41,20 @@ class TicTacToe {
 		return E.succeed(new TicTacToe(size))
 	}
 
+	get currentPlayer(): Player {
+		return this._state.currentPlayer
+	}
+
+	get Status(): GameStatus {
+		return this._state.status
+	}
+
 	private boundCheck(row: number, col: number): boolean {
 		return !(row < 0 || row >= this._state.game.length || col < 0 || col >= this._state.game.length)
 	}
 
 	private checkStatus() {
 		return E.suspend(() => {
-
 			const board = this._state.game;
 			const checkWinner = (line: GameSlot[]): O.Option<Player> => {
 				const [first, ...rest] = line;
@@ -91,6 +99,22 @@ class TicTacToe {
 		})
 	}
 
+	public getMove() {
+		return E.suspend(() => {
+			const moves = this._state.game.flatMap((row, rowIndex) =>
+				row.map(
+					(cell, colIndex) => (cell === " " ? [rowIndex, colIndex] as Pos : null)
+				).filter((pos): pos is Pos => pos !== null)
+			)
+
+			if (moves.length === 0) {
+				return E.succeed(O.none())
+			}
+
+			return E.succeed(O.some(moves))
+		})
+	}
+
 	public makeMove(pos: Pos) {
 		return E.suspend(() => {
 			const [row, col] = pos;
@@ -108,28 +132,47 @@ class TicTacToe {
 			}
 
 			this._state.game[row][col] = this._state.currentPlayer;
-			return E.suspend(() => this.checkStatus())
+			this._state.currentPlayer = this.opponent()
+			return this.checkStatus()
 		})
 	}
 
-	public displayBoard(): void {
+	public opponent(): Player {
+		if (this.currentPlayer === "X") {
+			return ("O" as Player)
+		} else {
+			return ("X" as Player)
+		}
+	}
+
+	public copy(): E.Effect<TicTacToe> {
+		return E.suspend(() => {
+			const newGame = new TicTacToe(this._state.game.length);
+			newGame._state = {
+				game: this._state.game.map(row => [...row]),
+				currentPlayer: this._state.currentPlayer,
+				status: { ...this._state.status }
+			};
+			return E.succeed(newGame)
+		})
+	}
+
+	public displayBoard() {
 		const state = this._state.game
+		const boardDisplay = state.map(row => row.join('|')).join('\n' + '-'.repeat(state.length * 2 - 1) + '\n')
 
-		state.forEach(row => {
-			console.log(row.join('|'))
-			console.log('-'.repeat(state.length * 2 - 1))
-		})
+		return Console.log(boardDisplay)
 	}
 
-	public displayStatus(): void {
+	public displayStatus() {
 		const status = this._state.status
 		const match = M.type<GameStatus>().pipe(
 			M.when({ type: 'Draw' }, (_) => "The Game is on draw!"),
 			M.when({ type: "Progress" }, (_) => "The Game is on progress!"),
-			M.when({ type: "Winner" }, (winner) => `The winner of the game is ${winner.Player}`),
+			M.when({ type: "Winner" }, (winner) => `The winner of the game is ${winner.Player}!`),
 			M.exhaustive
 		)
 
-		console.log(match(status))
+		return Console.log(match(status))
 	}
 }
