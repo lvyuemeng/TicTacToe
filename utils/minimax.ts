@@ -1,105 +1,103 @@
-import { Match as M, Option, pipe } from "effect";
-import { Option as O } from "effect";
-import { Effect as E } from "effect";
-import { TicTacToe, Player } from "./game";
-import { type GameStatus, type Pos } from "./game";
-import type { Effect } from "effect/Effect";
-import { gen, bind } from "effect/Option";
+import { Match as M, Option as O, Effect as E, pipe } from "effect"
+import type { Effect } from "effect/Effect"
+import type { Board, GameState, GameStatus, Pos, Player as Playertype } from "./game"
+import { Player, TicTactoe } from "./game"
 
-export { TicTacToeMinimax }
-
+// Types
 type MinimaxScore = number
 type MinimaxRecord = {
-	moveScore: MinimaxScore,
-	pos: O.Option<Pos>
-}
-interface Minimax<T> {
-	isMaximizing(player: Player): boolean
-	eval(gameState: T): MinimaxScore
-	minimax(gameState: TicTacToe, depth: number, palyer: Player): E.Effect<MinimaxRecord>
+	readonly moveScore: MinimaxScore,
+	readonly pos: O.Option<Pos>
 }
 
-class TicTacToeMinimax implements Minimax<TicTacToe> {
-	private max_depth: number
+// Main Service
+export const Minimax = {
+	make: (maxDepth: number) => ({
+		isMaximizing: (player: Player): boolean =>
+			pipe(
+				player,
+				M.type<Playertype>().pipe(
+					M.when(p => p === Player.X, () => true),
+					M.when(p => p === Player.O, () => false),
 
-	constructor(max_depth: number) {
-		this.max_depth = max_depth
-	}
+					// wierd type check
+					M.orElse(() => false)
+				)
+			),
 
-	isMaximizing(player: Player): boolean {
-		return M.value<Player>(player).pipe(
-			M.when((p: Player) => p === Player.X, (_) => true),
-			M.when((p: Player) => p === Player.O, (_) => false),
-			M.exhaustive
+		evaluate: (state: GameStatus): MinimaxScore =>
+			pipe(
+				state,
+				M.type<GameStatus>().pipe(
+					M.when({ _tag: 'Winner' }, ({ player }) =>
+						Minimax.make(maxDepth).isMaximizing(player) ? 1 : -1
+					),
+					M.when({ _tag: 'Draw' }, () => 0),
+					M.when({ _tag: 'Progress' }, () => 0),
+					M.exhaustive
+				)
+			),
+
+		getBestMove: (gameState: GameState<Board>) =>
+			pipe(
+				minimax(gameState, maxDepth, gameState.currentPlayer),
+				E.map(result => result.pos)
+			)
+	})
+}
+
+// Core minimax algorithm
+const minimax = (
+	gameState: GameState<Board>,
+	depth: number,
+	player: Player
+): E.Effect<MinimaxRecord, Error> =>
+	E.gen(function* (_) {
+		const score = Minimax.make(depth).evaluate(gameState.status)
+
+		if (gameState.status._tag !== 'Progress' || depth === 0) {
+			return { moveScore: score, pos: O.none() }
+		}
+
+		const moves = yield* TicTactoe.getAvailableMoves(gameState)
+
+		if (O.isNone(moves)) {
+			return { moveScore: score, pos: O.none() }
+		}
+
+		const { bestScore, scoreFn } = getSearchParams(player)
+
+		return yield* pipe(
+			moves.value,
+			E.reduce(
+				{ moveScore: bestScore, pos: O.none<Pos>() },
+				(acc, move) => evaluateMove(gameState, move, depth, player, acc, scoreFn)
+			)
 		)
-	}
+	})
 
-	eval(gameState: TicTacToe): MinimaxScore {
-		const status = gameState.Status
+// Helper functions
+const getSearchParams = (player: Player) =>
+	Minimax.make(0).isMaximizing(player)
+		? { bestScore: -Infinity, scoreFn: Math.max }
+		: { bestScore: Infinity, scoreFn: Math.min }
 
-		return M.value<GameStatus>(status).pipe(
-			M.when({ type: 'Winner' }, (winner) => {
-				if (this.isMaximizing(winner.Player)) {
-					return 1
-				} else {
-					return -1
-				}
-			}),
-			M.when({ type: 'Draw' }, (_) => 0),
-			M.when({ type: "Progress" }, (_) => 0),
-			M.exhaustive
+const evaluateMove = (
+	state: GameState<Board>,
+	move: Pos,
+	depth: number,
+	player: Player,
+	acc: MinimaxRecord,
+	scoreFn: (a: number, b: number) => number
+) =>
+	pipe(
+		TicTactoe.makeMove(move)(state),
+		E.flatMap(newState =>
+			minimax(newState, depth - 1, TicTactoe.opponent(player))
+		),
+		E.map(({ moveScore: score }) =>
+			scoreFn(score, acc.moveScore) === score
+				? { moveScore: score, pos: O.some(move) }
+				: acc
 		)
-
-	}
-
-	minimax(gameState: TicTacToe, depth: number, player: Player): E.Effect<MinimaxRecord> {
-		return E.gen(function* (this: TicTacToeMinimax) {
-			const score = this.eval(gameState);
-			const moves = yield* gameState.getMove();
-
-			const isMax = () => {
-				if (this.isMaximizing(player)) {
-					return { bestScore: -Infinity, nextPlayer: gameState.opponent(), scoreFn: Math.max };
-				} else {
-					return { bestScore: Infinity, nextPlayer: gameState.opponent(), scoreFn: Math.min };
-				}
-			};
-
-			if (gameState.Status.type !== 'Progress' || depth === 0) {
-				return { moveScore: score, pos: O.none() };
-			}
-
-			if (O.isSome(moves)) {
-				const movesIn = moves.value;
-				const { bestScore, nextPlayer, scoreFn } = isMax();
-
-				return yield* E.reduce(
-					movesIn,
-					{ moveScore: bestScore, pos: O.none<Pos>() },
-					(acc, move) =>
-						E.gen(function* (this: TicTacToeMinimax) {
-							const newState = yield* gameState.copy();
-							newState.makeMove(move);
-							const { moveScore: score } = yield* this.minimax(newState, depth - 1, nextPlayer);
-
-							// Update the best score and position if the current move is better
-							return scoreFn(score, acc.moveScore) === score
-								? { moveScore: score, pos: O.some(move) }
-								: acc;
-						}.bind(this))
-				);
-			} else {
-				return { moveScore: score, pos: O.none() };
-			}
-		}.bind(this));
-	}
-
-	public getBestPos(gameState: TicTacToe): E.Effect<O.Option<Pos>> {
-		return E.gen(function* (this: TicTacToeMinimax) {
-			const player = gameState.currentPlayer;
-			const { moveScore: _, pos } = yield* this.minimax(gameState, this.max_depth, player);
-			return pos;
-		}.bind(this));
-	}
-
-}
+	)

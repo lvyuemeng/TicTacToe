@@ -1,178 +1,191 @@
-import { Console, Effect as E, Option as O } from 'effect';
+import { Console, Effect as E, Option as O, pipe, type Effect } from 'effect';
 import { Match as M } from "effect";
-import type { Effect } from 'effect/Effect';
-import { never } from 'effect/Fiber';
-import { some } from 'effect/Predicate';
 
-export type { GameState, GameStatus, Pos }
-export { TicTacToe, Player }
+export type GameSlot = 'X' | 'O' | ' '
+export type Board = GameSlot[][]
+export type Pos = readonly [number, number]
 
-type GameSlot = 'X' | 'O' | ' ';
-type Board = GameSlot[][]
-type Pos = [number, number]
+export const Player = {
+	X: 'X',
+	O: 'O'
+} as const
 
-enum Player {
-	X = 'X',
-	O = 'O'
+export type Player = typeof Player[keyof typeof Player]
+
+// ADT for Game Status
+export type GameStatus =
+	| { readonly _tag: 'Winner'; readonly player: Player }
+	| { readonly _tag: 'Draw' }
+	| { readonly _tag: 'Progress' }
+
+export interface GameState<T> {
+	readonly game: T
+	readonly currentPlayer: Player
+	readonly status: GameStatus
 }
 
-type GameStatus = { type: 'Winner'; Player: Player } | { type: 'Draw' } | { type: 'Progress' }
+export const TicTactoe = {
+	// Constructor
+	make: (size: number): E.Effect<GameState<Board>, Error> =>
+		pipe(
+			validateSize(size),
+			E.map((size: number) => ({
+				game: createEmptyBoard(size),
+				currentPlayer: Math.random() < 0.5 ? Player.X : Player.O,
+				status: { _tag: 'Progress' }
+			}))
+		),
 
-type GameState<T> = {
-	readonly game: T;
-	currentPlayer: Player;
-	status: GameStatus;
-};
+	makeMove: (pos: Pos) => (state: GameState<Board>): E.Effect<GameState<Board>, Error> =>
+		pipe(
+			state,
+			validateMove(pos),
+			E.map(updateBoard(pos)),
+			E.map(switchPlayer),
+			E.flatMap(checkGameStatus)
+		),
 
-class TicTacToe {
-	private _state: GameState<Board>;
-
-	constructor(size: number) {
-		this._state = {
-			game: Array.from({ length: size }, () => Array(size).fill(' ')),
-			currentPlayer: Math.random() < 0.5 ? Player.X : Player.O,
-			status: { type: 'Progress' }
-		}
-	}
-	static init(size: number): E.Effect<TicTacToe, Error> {
-		if (size < 3) {
-			return E.fail(new Error("Board size must be at least 3"))
-		}
-		return E.succeed(new TicTacToe(size))
-	}
-
-	get currentPlayer(): Player {
-		return this._state.currentPlayer
-	}
-
-	get Status(): GameStatus {
-		return this._state.status
-	}
-
-	private boundCheck(row: number, col: number): boolean {
-		return !(row < 0 || row >= this._state.game.length || col < 0 || col >= this._state.game.length)
-	}
-
-	private checkStatus() {
-		return E.suspend(() => {
-			const board = this._state.game;
-			const checkWinner = (line: GameSlot[]): O.Option<Player> => {
-				const [first, ...rest] = line;
-				return rest.length > 0 && rest.every(slot => slot === first && slot !== ' ') ? O.some(first as Player) : O.none();
-			}
-
-			// Functional mapping to check winners for rows and columns
-			const rowWinners = board.map(checkWinner);
-			const colWinners = Array.from({ length: board.length }, (_, colIndex) =>
-				checkWinner(board.map(row => row[colIndex]))
-			);
-
-			// Concatenate all winners
-			const allWinners = [...rowWinners, ...colWinners];
-
-			// Check if any winners exist
-			const winner = O.firstSomeOf(allWinners);
-			if (O.isSome(winner)) {
-				this._state.status = { type: 'Winner', Player: winner.value };
-				return E.succeed(never);
-			}
-
-			// Check diagonals
-			const diagWinners = [
-				checkWinner(board.map((row, index) => row[index])),
-				checkWinner(board.map((row, index) => row[board.length - 1 - index])),
-			];
-
-			// Check for diagonal winners
-			const diagWinner = diagWinners.find(O.isSome);
-			if (diagWinner) {
-				this._state.status = { type: 'Winner', Player: diagWinner.value };
-				return E.succeed(never);
-			}
-
-			// Check for draw
-			if (board.flat().every(slot => slot !== ' ')) {
-				this._state.status = { type: 'Draw' };
-			}
-
-			return E.succeed(never);
-		})
-	}
-
-	public getMove() {
-		return E.suspend(() => {
-			const moves = this._state.game.flatMap((row, rowIndex) =>
-				row.map(
-					(cell, colIndex) => (cell === " " ? [rowIndex, colIndex] as Pos : null)
-				).filter((pos): pos is Pos => pos !== null)
+	getAvailableMoves: (state: GameState<Board>) =>
+		E.succeed(
+			pipe(
+				state.game,
+				findEmptyPositions,
+				moves => moves.length > 0 ? O.some(moves) : O.none()
 			)
+		),
 
-			if (moves.length === 0) {
-				return E.succeed(O.none())
-			}
+	opponent: (player: Player): Player =>
+		player === Player.X ? Player.O : Player.X,
 
-			return E.succeed(O.some(moves))
-		})
-	}
+	display: {
+		board: (state: GameState<Board>) =>
+			pipe(
+				state.game,
+				formatBoard,
+				Console.log
+			),
 
-	public makeMove(pos: Pos) {
-		return E.suspend(() => {
-			const [row, col] = pos;
-
-			if (this._state.status.type !== "Progress") {
-				return E.fail(new Error("Game is already finished"));
-			}
-
-			if (!this.boundCheck(row, col)) {
-				return E.fail(new Error("Invalid Position"));
-			}
-
-			if (this._state.game[row][col] !== ' ') {
-				return E.fail(new Error("Pos already taken"))
-			}
-
-			this._state.game[row][col] = this._state.currentPlayer;
-			this._state.currentPlayer = this.opponent()
-			return this.checkStatus()
-		})
-	}
-
-	public opponent(): Player {
-		if (this.currentPlayer === "X") {
-			return ("O" as Player)
-		} else {
-			return ("X" as Player)
-		}
-	}
-
-	public copy(): E.Effect<TicTacToe> {
-		return E.suspend(() => {
-			const newGame = new TicTacToe(this._state.game.length);
-			newGame._state = {
-				game: this._state.game.map(row => [...row]),
-				currentPlayer: this._state.currentPlayer,
-				status: { ...this._state.status }
-			};
-			return E.succeed(newGame)
-		})
-	}
-
-	public displayBoard() {
-		const state = this._state.game
-		const boardDisplay = state.map(row => row.join('|')).join('\n' + '-'.repeat(state.length * 2 - 1) + '\n')
-
-		return Console.log(boardDisplay)
-	}
-
-	public displayStatus() {
-		const status = this._state.status
-		const match = M.type<GameStatus>().pipe(
-			M.when({ type: 'Draw' }, (_) => "The Game is on draw!"),
-			M.when({ type: "Progress" }, (_) => "The Game is on progress!"),
-			M.when({ type: "Winner" }, (winner) => `The winner of the game is ${winner.Player}!`),
-			M.exhaustive
-		)
-
-		return Console.log(match(status))
+		status: (state: GameState<Board>) =>
+			pipe(
+				state.status,
+				formatStatus,
+				Console.log
+			)
 	}
 }
+
+// Board State
+const createEmptyBoard = (size: number): Board =>
+	Array.from({ length: size }, () => Array(size).fill(' '))
+
+const updateBoard = ([row, col]: Pos) => (state: GameState<Board>) => ({
+	...state,
+	game: state.game.map((r, i) =>
+		i === row ? r.map((c, j) => j === col ? state.currentPlayer : c) : r
+	)
+})
+
+// Player State
+const switchPlayer = (state: GameState<Board>) => ({
+	...state,
+	currentPlayer: TicTactoe.opponent(state.currentPlayer)
+})
+
+// Vaild Operation
+const validateSize = (size: number) =>
+	size < 3
+		? E.fail(new Error("Board size must be at least 3"))
+		: E.succeed(size)
+
+const isValidPosition = ([row, col]: Pos, board: Board): boolean =>
+	row >= 0 && row < board.length && col >= 0 && col < board.length
+
+const isEmptyPosition = ([row, col]: Pos, board: Board): boolean =>
+	board[row][col] === ' '
+
+const validateMove = (pos: Pos) => (state: GameState<Board>) =>
+	pipe(
+		E.succeed(state),
+		E.filterOrFail(
+			s => s.status._tag === 'Progress',
+			() => new Error("Game is already finished")
+		),
+		E.filterOrFail(
+			s => isValidPosition(pos, s.game),
+			() => new Error("Invalid position")
+		),
+		E.filterOrFail(
+			s => isEmptyPosition(pos, s.game),
+			() => new Error("Position already taken")
+		)
+	)
+
+// Status Manage
+const checkGameStatus = (state: GameState<Board>) =>
+	pipe(
+		E.succeed(state),
+		E.map(s => ({
+			...s,
+			status: determineGameStatus(s.game)
+		}))
+	)
+
+const determineGameStatus = (board: Board): GameStatus => {
+	// Check for winner
+	const winner = pipe(
+		getAllLines(board),
+		lines => lines.find(isWinningLine),
+		O.fromNullable,
+		O.map(line => ({ _tag: 'Winner' as const, player: line[0] as Player }))
+	)
+
+	if (O.isSome(winner)) return winner.value
+
+	// Check for draw
+	return board.every(row => row.every(cell => cell !== ' '))
+		? { _tag: 'Draw' }
+		: { _tag: 'Progress' }
+}
+
+// Status Manage helper function
+const getAllLines = (board: Board): GameSlot[][] => [
+	...getRows(board),
+	...getColumns(board),
+	...getDiagonals(board)
+]
+
+const getRows = (board: Board): GameSlot[][] => board
+
+const getColumns = (board: Board): GameSlot[][] =>
+	board[0].map((_, i) => board.map(row => row[i]))
+
+const getDiagonals = (board: Board): GameSlot[][] => [
+	board.map((row, i) => row[i]),
+	board.map((row, i) => row[board.length - 1 - i])
+]
+
+const findEmptyPositions = (board: Board): Pos[] =>
+	board.flatMap((row, i) =>
+		row.map((cell, j) => cell === ' ' ? [i, j] as const : null)
+	).filter((pos): pos is Pos => pos !== null)
+
+const isWinningLine = (line: GameSlot[]): boolean =>
+	line[0] !== ' ' && line.every(cell => cell === line[0])
+
+// Display formatting
+const formatBoard = (board: Board): string =>
+	board
+		.map(row => row.join('|'))
+		.join('\n' + '-'.repeat(board.length * 2 - 1) + '\n')
+
+const formatStatus = (status: GameStatus): string =>
+	pipe(
+		status,
+		M.type<GameStatus>()
+			.pipe(
+				M.when({ _tag: 'Draw' }, () => "The Game is a draw!"),
+				M.when({ _tag: 'Progress' }, () => "The Game is in progress!"),
+				M.when({ _tag: 'Winner' }, ({ player }) => `The winner is ${player}!`),
+				M.exhaustive
+			)
+	)

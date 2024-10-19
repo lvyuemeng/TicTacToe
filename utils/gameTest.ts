@@ -1,24 +1,13 @@
-import { TicTacToe } from "./game";
-import { TicTacToeMinimax } from "./minimax";
-import { Effect as E } from "effect";
+import { TicTactoe } from "./game"
+import { Console, Effect as E } from "effect"
 
-const prog = E.gen(function* () {
-	const tic = yield* TicTacToe.init(3)
-	const moves = [0, 1, 2].map(col => tic.makeMove([0, col]));
-	yield* E.all(moves)
-
-	yield* tic.displayBoard();
-	yield* tic.displayStatus();
-
-	const tic2 = yield* TicTacToe.init(4)
-	const ticAI = new TicTacToeMinimax(5)
-	yield* tic2.makeMove([1, 3])
-	yield* tic2.makeMove([2, 3])
-	const pos_1 = yield* ticAI.getBestPos(tic2)
-	yield* tic2.makeMove([3,3])
-	const pos_2 = yield* ticAI.getBestPos(tic2)
-	yield* tic2.displayBoard();
-	console.log(pos_1, pos_2)
+const prog = E.gen(function* (_) {
+	yield* _(Console.log("Initial board:"))
+	const tic = yield* TicTactoe.make(3)
+	const tic2 = yield* TicTactoe.makeMove([1, 2])(tic)
+	yield* TicTactoe.display.board(tic)
+	yield* TicTactoe.display.board(tic2)
+	yield* TicTactoe.display.status(tic)
 })
-E.runPromise(prog)
 
+E.runPromise(prog)
