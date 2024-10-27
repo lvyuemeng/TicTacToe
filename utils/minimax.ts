@@ -1,9 +1,7 @@
 import { Match as M, Option as O, Effect as E, pipe } from "effect"
-import type { Effect } from "effect/Effect"
 import type { Board, GameState, GameStatus, Pos, Player as Playertype } from "./game"
 import { Player, TicTactoe } from "./game"
 
-// Types
 type MinimaxScore = number
 type MinimaxRecord = {
 	readonly moveScore: MinimaxScore,

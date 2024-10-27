@@ -1,4 +1,4 @@
-import { Console, Effect as E, Option as O, pipe, type Effect } from 'effect';
+import { Console, Effect as E, Option as O, pipe } from 'effect';
 import { Match as M } from "effect";
 
 export type GameSlot = 'X' | 'O' | ' '
@@ -39,17 +39,17 @@ export const TicTactoe = {
 	makeMove: (pos: Pos) => (state: GameState<Board>): E.Effect<GameState<Board>, Error> =>
 		pipe(
 			state,
-			validateMove(pos),
+			validMove(pos),
 			E.map(updateBoard(pos)),
 			E.map(switchPlayer),
-			E.flatMap(checkGameStatus)
+			E.flatMap(updateGameStatus)
 		),
 
 	getAvailableMoves: (state: GameState<Board>) =>
 		E.succeed(
 			pipe(
 				state.game,
-				findEmptyPositions,
+				getEmptyPos,
 				moves => moves.length > 0 ? O.some(moves) : O.none()
 			)
 		),
@@ -97,13 +97,13 @@ const validateSize = (size: number) =>
 		? E.fail(new Error("Board size must be at least 3"))
 		: E.succeed(size)
 
-const isValidPosition = ([row, col]: Pos, board: Board): boolean =>
+const validPos = ([row, col]: Pos, board: Board): boolean =>
 	row >= 0 && row < board.length && col >= 0 && col < board.length
 
-const isEmptyPosition = ([row, col]: Pos, board: Board): boolean =>
+const EmptyPos = ([row, col]: Pos, board: Board): boolean =>
 	board[row][col] === ' '
 
-const validateMove = (pos: Pos) => (state: GameState<Board>) =>
+const validMove = (pos: Pos) => (state: GameState<Board>) =>
 	pipe(
 		E.succeed(state),
 		E.filterOrFail(
@@ -111,26 +111,26 @@ const validateMove = (pos: Pos) => (state: GameState<Board>) =>
 			() => new Error("Game is already finished")
 		),
 		E.filterOrFail(
-			s => isValidPosition(pos, s.game),
+			s => validPos(pos, s.game),
 			() => new Error("Invalid position")
 		),
 		E.filterOrFail(
-			s => isEmptyPosition(pos, s.game),
+			s => EmptyPos(pos, s.game),
 			() => new Error("Position already taken")
 		)
 	)
 
 // Status Manage
-const checkGameStatus = (state: GameState<Board>) =>
+const updateGameStatus = (state: GameState<Board>) =>
 	pipe(
 		E.succeed(state),
 		E.map(s => ({
 			...s,
-			status: determineGameStatus(s.game)
+			status: checkGameStatus(s.game)
 		}))
 	)
 
-const determineGameStatus = (board: Board): GameStatus => {
+const checkGameStatus = (board: Board): GameStatus => {
 	// Check for winner
 	const winner = pipe(
 		getAllLines(board),
@@ -164,7 +164,7 @@ const getDiagonals = (board: Board): GameSlot[][] => [
 	board.map((row, i) => row[board.length - 1 - i])
 ]
 
-const findEmptyPositions = (board: Board): Pos[] =>
+const getEmptyPos = (board: Board): Pos[] =>
 	board.flatMap((row, i) =>
 		row.map((cell, j) => cell === ' ' ? [i, j] as const : null)
 	).filter((pos): pos is Pos => pos !== null)

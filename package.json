@@ -6,9 +6,11 @@
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.6.3"
   },
   "dependencies": {
-    "effect": "^3.9.2"
+    "@effect/platform": "^0.69.9",
+    "@effect/platform-node": "^0.64.10",
+    "effect": "^3.10.4"
   }
 }
