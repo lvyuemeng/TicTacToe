@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { Effect as E } from "effect";
 import { NodeRuntime, NodeTerminal } from "@effect/platform-node";
 import { display, evalGame, parseLoop } from './utils/io';

@@ -1,7 +1,7 @@
 # tictactoe
 
-A tictactoe Game.
+A tictactoe Game with a minimax AI.
 
 ```bash
-bun gameTest.ts
+bun index.ts
 ```
