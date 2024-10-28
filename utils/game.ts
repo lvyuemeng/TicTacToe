@@ -92,7 +92,7 @@ const switchPlayer = (state: GameState<Board>) => ({
 })
 
 // Vaild Operation
-const validateSize = (size: number) =>
+export const validateSize = (size: number) =>
 	size < 3
 		? E.fail(new Error("Board size must be at least 3"))
 		: E.succeed(size)
